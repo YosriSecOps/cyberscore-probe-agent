@@ -1,0 +1,10 @@
+# CyberScore TN — Autonomous Probe Agent Requirements
+# Python 3.9+ Compatible
+# The core probe_agent is lightweight (< 50MB RAM) and built primarily on Python standard libraries
+# (socket, ssl, urllib, concurrent.futures, hashlib, dataclasses, asyncio, logging)
+
+# Optional HTTP and typing utilities (if integrating with external tools or FastAPI)
+pydantic>=2.0.0
+requests>=2.31.0
+httpx>=0.25.0
+aiohttp>=3.9.0
