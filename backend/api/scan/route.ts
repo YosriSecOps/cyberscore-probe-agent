@@ -40,16 +40,39 @@ interface Finding {
 }
 
 async function runAutonomousPythonAgent(cleanDomain: string) {
-  const workspaceRoot = path.resolve(process.cwd(), "..");
+  // 1. Locate workspace root containing probe_agent
+  const candidateRoots = [
+    process.cwd(),
+    path.resolve(process.cwd(), ".."),
+    path.resolve(process.cwd(), "../.."),
+    "/opt/cyberscore",
+    "/root/STAGE_PFA",
+    path.resolve(__dirname, "../../.."),
+  ];
+  let workspaceRoot = path.resolve(process.cwd(), "..");
+  for (const root of candidateRoots) {
+    if (fs.existsSync(path.join(root, "probe_agent", "run.py"))) {
+      workspaceRoot = root;
+      break;
+    }
+  }
+
+  // 2. Locate Python executable (Linux / RHEL / Windows)
   const candidatePythons = [
-    path.resolve(workspaceRoot, ".venv", "bin", "python.exe"),
+    path.resolve(workspaceRoot, ".venv", "bin", "python3"),
+    path.resolve(workspaceRoot, ".venv", "bin", "python"),
+    path.resolve(process.cwd(), ".venv", "bin", "python3"),
+    path.resolve(process.cwd(), ".venv", "bin", "python"),
+    "/usr/bin/python3",
+    "/usr/local/bin/python3",
+    "/usr/bin/python",
     path.resolve(workspaceRoot, ".venv", "Scripts", "python.exe"),
-    path.resolve(process.cwd(), ".venv", "bin", "python.exe"),
+    path.resolve(workspaceRoot, ".venv", "bin", "python.exe"),
     path.resolve(process.cwd(), ".venv", "Scripts", "python.exe"),
-    "python",
+    path.resolve(process.cwd(), ".venv", "bin", "python.exe"),
   ];
 
-  let pythonPath = candidatePythons[0];
+  let pythonPath = "python3";
   for (const p of candidatePythons) {
     if (fs.existsSync(p)) {
       pythonPath = p;
@@ -62,10 +85,18 @@ async function runAutonomousPythonAgent(cleanDomain: string) {
     fs.mkdirSync(reportsDir, { recursive: true });
   }
 
+  // Ensure PYTHONPATH includes workspaceRoot so probe_agent is always importable,
+  // and point OLLAMA_URL to Windows host (192.168.98.1:25000) when running in VM
+  const env = {
+    ...process.env,
+    PYTHONPATH: workspaceRoot + (process.env.PYTHONPATH ? path.delimiter + process.env.PYTHONPATH : ""),
+    OLLAMA_URL: process.env.OLLAMA_URL || "http://192.168.98.1:25000",
+  };
+
   const { stdout } = await execFileAsync(
     pythonPath,
     ["-m", "probe_agent.run", "--target", cleanDomain, "--out", reportsDir],
-    { cwd: workspaceRoot, timeout: 240000 }
+    { cwd: workspaceRoot, env, timeout: 240000 }
   );
 
   const match = stdout.match(/reports[\\/](audit_CYBER-[A-Za-z0-9]+\.json)/i);
