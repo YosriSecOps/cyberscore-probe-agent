@@ -34,43 +34,14 @@ Unlike standard passive scanners that merely collect public DNS records and TLS 
 
 The active scan operates across an isolated, multi-tier decoupled infrastructure designed to prevent any lateral movement or cloud data leakage:
 
-```
-[ Auditor / Browser ] 
-        │
-        ▼ (Next.js Front-End)
-[ ScannerClient.tsx + AgentWorkflowGraph.tsx + scanCoordinator.ts ]
-        │  POST /api/scan (scan_type: "autonomous")
-        ▼ (API Gateway & Gatekeeper)
-[ route.ts : ANCS Mandate & RoE RBAC Check ]
-        │  Spawns python subprocess
-        ▼
-╔══════════════════════════════════════════════════════════════════════╗
-║  VM 3 : BASTION D'AUDIT (RHEL 9.5 Minimal — 192.168.98.148)           ║
-║  SELinux: Enforcing Mode | Firewalld: Default DROP Policy            ║
-║  RAM Footprint: < 50 MB                                              ║
-║                                                                      ║
-║   ┌──────────────────────────────────────────────────────────────┐   ║
-║   │           PentestOrchestrator (orchestrator.py)              │   ║
-║   └──────────────────────────────┬───────────────────────────────┘   ║
-║                                  │                                   ║
-║         ┌────────────────────────┼────────────────────────┐          ║
-║         ▼                        ▼                        ▼          ║
-║   [ Agent 1: Recon ]      [ Agent 2: CVE/AI ]      [ Agent 3: PoC ]  ║
-║   • Top 1000 Ports        • Deterministic Rules    • Reflected XSS   ║
-║   • ICMP TTL OS           • Host Ollama LLM (:25K) • SQL Error Leak  ║
-║   • EOL Obsolescence      • OWASP / NIST Mapping   • Sensitive Paths ║
-║         │                        │                        │          ║
-║         └────────────────────────┼────────────────────────┘          ║
-║                                  ▼                                   ║
-║                   [ Agent 4: Scoring & Certification ]               ║
-║                   • CyberScore Deduction Formula                     ║
-║                   • Actionable Bash Hardening Roadmap                ║
-║                   • Cryptographic SHA-256 Audit Seal                 ║
-╚══════════════════════════════════╤═══════════════════════════════════╝
-                                   │ Output JSON
-                                   ▼
-[ JSON Report Ingestion ➔ Live UI Telemetry ➔ Official PDF Certificate ]
-```
+| Architecture Layer | Core Component & Technology | Key Security & Operational Responsibilities |
+| :--- | :--- | :--- |
+| **Tier 1: Front-End UI & State** | `ScannerClient.tsx`<br>`AgentWorkflowGraph.tsx`<br>`scanCoordinator.ts`<br>*(Next.js 14 App Router)* | • Enforces viewer access restrictions and renders the RoE modal.<br>• Real-time animated 4-agent graph with live pulse indicators.<br>• Session persistence via in-memory singleton across language switches (FR ↔ AR ↔ EN). |
+| **Tier 2: API Gatekeeper & RBAC** | `route.ts`<br>*(Next.js Server API Gateway)* | • Validates the official ANCS mandate code (`ANCS-2026`) and RoE consent.<br>• Resolves DNS & checks sovereign IP ranges (ATI AS2609: `193.95.*`, `41.22.*`).<br>• Spawns the isolated Python sub-process with strict 240s timeout. |
+| **Tier 3: Audit Bastion Sandbox** | **VM 3: `CyberScore-Agent-Probe`**<br>*(RHEL 9.5 Minimal — 192.168.98.148)* | • **SELinux in `Enforcing` mode** for strict process confinement.<br>• **Firewalld with default `DROP` policy** to isolate the offensive machinery.<br>• Ultra-lightweight memory footprint (**< 50 MB RAM**). |
+| **Tier 4: Multi-Agent Pipeline** | `PentestOrchestrator`<br>*(4 Specialized Python Agents)* | • **Agent 1:** 150-thread Top 1000 port scan, ICMP TTL OS fingerprinting, EOL database.<br>• **Agent 2:** Deterministic flaw correlation & OWASP/NIST mapping.<br>• **Agent 3:** Non-destructive PoC verification (`cs789<cs_test>`, SQL syntax errors).<br>• **Agent 4:** CyberScore deduction formula, hardening roadmap & SHA-256 seal. |
+| **Tier 5: Sovereign AI Reasoning** | **Host Ollama Node**<br>*(Qwen2.5-Coder:7B on port :25000)* | • Decoupled local AIaaS connection with zero external cloud dependencies.<br>• Deterministic parameters (`temperature=0.1`, `format="json"`) eliminating hallucinations. |
+| **Tier 6: Delivery & Integrity** | `AuditState` + `ReportGenerator`<br>*(JSON & PDF Engines)* | • Computes immutable SHA-256 state seal for non-repudiation.<br>• Formats multi-lingual JSON report and renders official sovereign PDF certificates. |
 
 ---
 
