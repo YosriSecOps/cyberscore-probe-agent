@@ -148,18 +148,29 @@ TOP_1000_PORTS = sorted(set([
 
 # ── Core Thread-Based Scanner ──────────────────────────────────────────────
 
-SCAN_TIMEOUT = 1.8  # seconds per socket connect attempt (optimized for fast discovery)
-MAX_WORKERS = 90    # High-throughput worker pool for 1000 ports in ~20s
-BANNER_TIMEOUT = 1.5
+# Stability-tuned constants:
+# - SCAN_TIMEOUT raised to 2.5s  → prevents false-negatives on high-latency public sites
+# - BANNER_TIMEOUT raised to 2.0s → allows remote servers time to respond
+# - MAX_WORKERS reduced to 40    → avoids triggering remote rate-limiting / SYN-flood
+#   protection that causes random port closures on repeated scans of public sites
+SCAN_TIMEOUT = 2.5   # seconds per socket connect (tuned for public internet targets)
+MAX_WORKERS = 40     # conservative concurrency — stable across CDN/firewall-protected sites
+BANNER_TIMEOUT = 2.0
+
+# Maximum retry attempts for ports in SERVICE_MAP (important known ports)
+MAX_SERVICE_RETRIES = 3
+RETRY_BACKOFF_S = 0.3  # Exponential back-off base: 0.3s, 0.6s between retries
 
 
 def _probe_port(ip: str, host: str, port: int) -> Tuple[int, bool, str]:
     """
     Probe a single port using a blocking socket with pre-resolved IP.
     Returns (port, is_open, banner). Designed to run inside a ThreadPoolExecutor.
+
+    For ports in SERVICE_MAP (critical/known services), retries up to MAX_SERVICE_RETRIES
+    times with exponential back-off to absorb transient packet loss or rate-limiting.
     """
-    # Try up to 2 attempts for service ports to withstand remote packet loss / rate-limits
-    max_attempts = 2 if port in SERVICE_MAP else 1
+    max_attempts = MAX_SERVICE_RETRIES if port in SERVICE_MAP else 1
 
     for attempt in range(max_attempts):
         sock = None
@@ -172,7 +183,8 @@ def _probe_port(ip: str, host: str, port: int) -> Tuple[int, bool, str]:
             banner = ""
             try:
                 if port in (80, 8080, 8000, 8008, 8081, 8443):
-                    req = f"HEAD / HTTP/1.1\r\nHost: {host}\r\nUser-Agent: CyberScore/1.0\r\nConnection: close\r\n\r\n"
+                    # Use a neutral browser-like UA to avoid WAF/CDN filtering
+                    req = f"HEAD / HTTP/1.1\r\nHost: {host}\r\nUser-Agent: Mozilla/5.0 (compatible; CyberScore/2.0)\r\nConnection: close\r\n\r\n"
                     sock.sendall(req.encode("ascii", errors="ignore"))
                 sock.settimeout(BANNER_TIMEOUT)
                 data = sock.recv(512)
@@ -187,6 +199,7 @@ def _probe_port(ip: str, host: str, port: int) -> Tuple[int, bool, str]:
                     except Exception:
                         pass
             return (port, True, banner)
+
         except (socket.timeout, TimeoutError):
             if sock:
                 try:
@@ -195,9 +208,19 @@ def _probe_port(ip: str, host: str, port: int) -> Tuple[int, bool, str]:
                     pass
             if attempt < max_attempts - 1:
                 import time
-                time.sleep(0.2)
+                time.sleep(RETRY_BACKOFF_S * (attempt + 1))  # 0.3s, 0.6s back-off
                 continue
             return (port, False, "")
+
+        except ConnectionRefusedError:
+            # Definitively closed — no retry needed, short-circuit immediately
+            if sock:
+                try:
+                    sock.close()
+                except Exception:
+                    pass
+            return (port, False, "")
+
         except Exception:
             if sock:
                 try:

@@ -21,7 +21,9 @@ class PoCAgent:
         logger.info(f"[*] [AGENT 3: DYNAMIC PoC VALIDATION] Testing exploitability safely...")
         state.status = "verifying"
 
-        verifier = PoCVerifier(state.target_host)
+        # Use HTTPS for probes when the target confirmed a valid TLS certificate
+        has_valid_tls = state.ssl_info.get("valid", False)
+        verifier = PoCVerifier(state.target_host, use_https=has_valid_tls)
         validated = []
 
         # 1. Test Sensitive Discovered Endpoints

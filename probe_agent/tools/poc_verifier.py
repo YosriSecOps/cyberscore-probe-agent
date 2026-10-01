@@ -14,10 +14,22 @@ from probe_agent.models import VulnerabilityFinding
 class PoCVerifier:
     """
     Executes controlled, non-destructive validation probes.
+    Uses a stable User-Agent to avoid WAF/CDN filtering differences between scans.
     """
-    def __init__(self, target_host: str):
+    # Stable UA used for all PoC requests — matches web_inspector UA for consistency
+    _STABLE_HEADERS = {
+        "User-Agent": "Mozilla/5.0 (X11; Linux x86_64; rv:120.0) Gecko/20100101 Firefox/120.0",
+        "Accept": "text/html,application/xhtml+xml,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.9",
+    }
+    # Timeout raised from 4s → 6s to handle variable latency on public internet targets
+    _REQUEST_TIMEOUT = 6.0
+
+    def __init__(self, target_host: str, use_https: bool = False):
         self.target_host = target_host
-        self.base_url = f"http://{target_host}"
+        # Honour HTTPS if the target confirmed a valid TLS certificate
+        scheme = "https" if use_https else "http"
+        self.base_url = f"{scheme}://{target_host}"
 
     def verify_xss_reflection(self, endpoint: str = "/", param: str = "q") -> Tuple[bool, str]:
         """Test for unencoded input reflection (Potential XSS)."""
@@ -26,8 +38,8 @@ class PoCVerifier:
         url = f"{self.base_url}{endpoint}?{param}={encoded_probe}"
 
         try:
-            req = urllib.request.Request(url, headers={"User-Agent": "CyberScore-PoC-Tester/1.0"})
-            with urllib.request.urlopen(req, timeout=4.0) as resp:
+            req = urllib.request.Request(url, headers=self._STABLE_HEADERS)
+            with urllib.request.urlopen(req, timeout=self._REQUEST_TIMEOUT) as resp:
                 body = resp.read().decode("utf-8", errors="ignore")
                 if safe_probe in body:
                     return True, f"Probe unescaped in response: {url}"
@@ -50,8 +62,8 @@ class PoCVerifier:
         ]
 
         try:
-            req = urllib.request.Request(url, headers={"User-Agent": "CyberScore-PoC-Tester/1.0"})
-            with urllib.request.urlopen(req, timeout=4.0) as resp:
+            req = urllib.request.Request(url, headers=self._STABLE_HEADERS)
+            with urllib.request.urlopen(req, timeout=self._REQUEST_TIMEOUT) as resp:
                 body = resp.read().decode("utf-8", errors="ignore")
                 for pattern in sql_patterns:
                     match = re.search(pattern, body, re.IGNORECASE)
@@ -74,8 +86,8 @@ class PoCVerifier:
         """Verify if a sensitive endpoint exposes confidential data."""
         url = f"{self.base_url}{endpoint}"
         try:
-            req = urllib.request.Request(url, headers={"User-Agent": "CyberScore-PoC-Tester/1.0"})
-            with urllib.request.urlopen(req, timeout=3.0) as resp:
+            req = urllib.request.Request(url, headers=self._STABLE_HEADERS)
+            with urllib.request.urlopen(req, timeout=self._REQUEST_TIMEOUT) as resp:
                 body = resp.read().decode("utf-8", errors="ignore")
                 if "phpinfo()" in body:
                     return True, f"phpinfo() actively exposed at {url}"

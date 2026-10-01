@@ -25,6 +25,17 @@ def inspect_web_target(target_host: str) -> Dict[str, Any]:
         "missing_headers": [],
     }
 
+    # Stable, consistent User-Agent used for all requests in this scan session.
+    # A browser-like UA prevents CDN/WAF (e.g. Cloudflare) from returning different
+    # security headers for "bot" requests vs regular traffic, which was causing
+    # non-reproducible scan results on public sites.
+    STABLE_UA = "Mozilla/5.0 (X11; Linux x86_64; rv:120.0) Gecko/20100101 Firefox/120.0"
+    STABLE_HEADERS = {
+        "User-Agent": STABLE_UA,
+        "Accept": "text/html,application/xhtml+xml,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.9",  # Prevents geo-based content variations
+    }
+
     # Create permissive SSL context for scanning (does not crash on self-signed certs)
     unverified_ctx = ssl.create_default_context()
     unverified_ctx.check_hostname = False
@@ -55,17 +66,17 @@ def inspect_web_target(target_host: str) -> Dict[str, Any]:
     urls_to_test = [f"https://{target_host}", f"http://{target_host}"] if result["ssl_info"].get("valid") else [f"http://{target_host}", f"https://{target_host}"]
     for test_url in urls_to_test:
         try:
-            req = urllib.request.Request(
-                test_url,
-                headers={"User-Agent": "CyberScore-Security-Auditor/1.0", "Accept": "*/*"}
-            )
-            with urllib.request.urlopen(req, timeout=HTTP_TIMEOUT, context=unverified_ctx) as resp:
+            req = urllib.request.Request(test_url, headers=STABLE_HEADERS)
+            # Use a longer timeout (5.0s) for public internet targets with variable latency.
+            # Short timeouts (< 3s) cause flaky results when CDN edge nodes have varying RTT.
+            with urllib.request.urlopen(req, timeout=5.0, context=unverified_ctx) as resp:
                 for k, v in resp.getheaders():
                     headers_dict[k.lower()] = v
             if headers_dict:
                 base_url = test_url
                 break
         except urllib.error.HTTPError as e:
+            # Even error responses contain security headers — capture them
             for k, v in e.headers.items():
                 headers_dict[k.lower()] = v
             base_url = test_url
@@ -108,8 +119,9 @@ def inspect_web_target(target_host: str) -> Dict[str, Any]:
     for ep in SENSITIVE_ENDPOINTS:
         try:
             ep_url = f"{base_url}{ep}"
-            req = urllib.request.Request(ep_url, headers={"User-Agent": "CyberScore-Security-Auditor/1.0"})
-            with urllib.request.urlopen(req, timeout=2.5, context=unverified_ctx) as resp:
+            req = urllib.request.Request(ep_url, headers=STABLE_HEADERS)
+            # 4.0s timeout — enough for public sites without hanging the whole scan
+            with urllib.request.urlopen(req, timeout=4.0, context=unverified_ctx) as resp:
                 if resp.status in (200, 301, 302, 403):
                     discovered.append(f"{ep} ({resp.status})")
         except urllib.error.HTTPError as e:
@@ -119,22 +131,22 @@ def inspect_web_target(target_host: str) -> Dict[str, Any]:
             continue
 
     # Extract Page Title from base_url
+    import re
     try:
-        req = urllib.request.Request(base_url, headers={"User-Agent": "CyberScore-Security-Auditor/1.0"})
-        with urllib.request.urlopen(req, timeout=3.0, context=unverified_ctx) as resp:
+        req = urllib.request.Request(base_url, headers=STABLE_HEADERS)
+        with urllib.request.urlopen(req, timeout=5.0, context=unverified_ctx) as resp:
             content_sample = resp.read(8192).decode("utf-8", errors="ignore")
-            import re
             m = re.search(r'<title[^>]*>(.*?)</title>', content_sample, re.IGNORECASE | re.DOTALL)
             if m:
-                page_title = m.group(1).strip().replace("\r", "").replace("\n", " ")
+                page_title = re.sub(r'\s+', ' ', m.group(1).strip())
     except Exception:
         pass
 
     # 5. Probe Allowed HTTP Methods via OPTIONS
     allowed_methods = []
     try:
-        req = urllib.request.Request(base_url, headers={"User-Agent": "CyberScore-Security-Auditor/1.0"}, method="OPTIONS")
-        with urllib.request.urlopen(req, timeout=2.5, context=unverified_ctx) as resp:
+        req = urllib.request.Request(base_url, headers=STABLE_HEADERS, method="OPTIONS")
+        with urllib.request.urlopen(req, timeout=4.0, context=unverified_ctx) as resp:
             allow_header = resp.getheader("Allow") or resp.getheader("allow")
             if allow_header:
                 allowed_methods = [m.strip() for m in allow_header.split(",") if m.strip()]
