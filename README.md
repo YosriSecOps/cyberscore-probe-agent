@@ -84,6 +84,73 @@ The following chronological sequence illustrates the complete lifecycle from the
 
 ---
 
+## 🖥️ Front-End Architecture Deep Dive
+
+The front-end is specifically crafted for high-stakes cybersecurity auditing with zero state loss and real-time execution telemetry.
+
+### 1. The Audit Controller UI: [`ScannerClient.tsx`](frontend/components/scanner/ScannerClient.tsx)
+* **Scan Type Toggle:** Integrates `autonomous` as a high-tier option (`duration: "~35s"`, `scanners: 4`, `icon: Sparkles`).
+* **RBAC Enforcement for Viewers:** Users with role `viewer` are immediately blocked from triggering active scans; a modal guides them to request auditor credentials or switch to an authorized session.
+* **Modal de Conformité ANCS & RoE:**
+  * Displays classification badge `TLP:AMBER — DIFFUSION RESTREINTE`.
+  * Verifies official authorization codes (`ANCS-2026`, `ANCS-SEC-2026`, `ANCS-VAL-2026`).
+  * Requires 3 mandatory checkboxes:
+    1. *Mandat officiel d'audit délivré par l'ANCS ou le ministère de tutelle.*
+    2. *Respect de la plage horaire autorisée et non-perturbation du service.*
+    3. *Classification des résultats sous TLP:AMBER.*
+  * Logs the digital signature of the inspecting officer.
+* **Results Dashboard:**
+  * **Certification Badge:** Displays verified ANCS mandate reference, auditor signature, and cryptographic SHA-256 seal.
+  * **Score & Grade:** Sovereign grade (`A+` to `F`) with bilingual Arabic/French national status labels.
+  * **Interactive Hardening Roadmap:** Each remediation step features a one-click CLI command copy button (`copyCommand()`) with clipboard feedback.
+
+### 2. Real-Time Animated Graph: [`AgentWorkflowGraph.tsx`](frontend/components/scanner/AgentWorkflowGraph.tsx)
+* **Active Execution Bands:**
+  * `0% – 25%`: **Agent 1: Reconnaissance** (Cyan glow `#00e5ff` — Top 1000 ports, TTL OS, EOL).
+  * `25% – 50%`: **Agent 2: Corrélation CVE & IA** (Purple glow `#a855f7` — Ollama inference, OWASP/NIST mapping).
+  * `50% – 75%`: **Agent 3: Validation PoC** (Amber glow `#f59e0b` — Dynamic non-destructive reflection probes).
+  * `75% – 100%`: **Agent 4: Remédiation & Scellement** (Emerald glow `#10b981` — Hardening script & SHA-256 seal).
+* **Live Terminal Telemetry:** Streams terminal output lines, socket probe logs, and completed subtask checklists.
+
+### 3. Global State Coordinator: [`scanCoordinator.ts`](frontend/lib/scanCoordinator.ts)
+* **In-Memory Singleton:** Guarantees that the scan keeps running in the background even if the user switches languages (FR $\leftrightarrow$ AR $\leftrightarrow$ EN) or navigates across app tabs.
+* **Session Persistence:** Automatically synchronizes state to `sessionStorage` under `cyberscore_scanner_state_v1`.
+* **Dynamic Progress Ticker (`startProgressTicker`):** Smoothly advances progress through the 4 agent milestones while waiting for the back-end response.
+
+---
+
+## ⚙️ Back-End API Gateway Deep Dive
+
+The back-end bridge between the Next.js web application and the Python probe engine is implemented in [`backend/api/scan/route.ts`](backend/api/scan/route.ts):
+
+### 1. Live DNS & Sovereign Infrastructure Check
+* Resolves the domain via `dns.lookup`.
+* Performs a national infrastructure pre-check (ATI AS2609 IP ranges: `193.95.*` or `41.22.*`).
+* Returns `HTTP 422` if the host cannot be resolved on the public Internet.
+
+### 2. ANCS-RBAC Gatekeeper
+```typescript
+if (scanType === "autonomous") {
+  const validCodes = ["ANCS-2026", "ANCS-SEC-2026", "ANCS-VAL-2026"];
+  const isCodeValid = validCodes.includes(authorizationCode.toUpperCase()) || authorizationCode.toUpperCase().startsWith("ANCS-");
+  
+  if (!isCodeValid || !roeAccepted || !auditorSignature) {
+    return NextResponse.json(
+      { error: "Accès Refusé [ANCS-RBAC] : L'Audit Autonome Multi-Agents requiert un Mandat ANCS valide..." },
+      { status: 403 }
+    );
+  }
+}
+```
+
+### 3. Subprocess Execution (`runAutonomousPythonAgent`)
+* Dynamically locates Python across multiple candidate environments (`.venv/bin/python`, `.venv/Scripts/python.exe`).
+* Spawns: `python -m probe_agent.run --target <cleanDomain> --out <reportsDir>` with a strict 240-second timeout.
+* Captures `stdout`, extracts the generated report file path (matching regex `reports/audit_CYBER-*.json`).
+* Ingests, parses, and normalizes the JSON report with full multilinguality (French, Arabic, English).
+
+---
+
 ## 🤖 The 4 Autonomous Cooperative Agents
 
 The probe engine operates via a shared [`AuditState`](probe_agent/models.py) state machine through 4 stages:
@@ -116,7 +183,8 @@ The probe engine operates via a shared [`AuditState`](probe_agent/models.py) sta
   * Automatically injects obsolescence findings with severity scaled to software age.
 * **Contextual AI Reasoning ([`ai_client.py`](probe_agent/ai_client.py)):**
   * Connects over REST to the local **Host Ollama LLM (`qwen2.5-coder:7b`)**.
-  * Configured with strict parameters (`temperature=0.1`, `format="json"`) to guarantee reproducible, hallucination-free outputs.
+  * Candidate endpoints auto-probed: `192.168.98.1:25000`, `127.0.0.1:25000`, `11434`.
+  * Configured with strict parameters (`temperature=0.1`, `top_p=0.9`, `num_predict=250`, `format="json"`) to guarantee reproducible, hallucination-free outputs.
   * Maps findings to:
     * **OWASP Top 10 (2021):** `A01: Broken Access Control`, `A03: Injection`, `A05: Security Misconfiguration`, `A06: Vulnerable and Outdated Components`.
     * **NIST Cybersecurity Framework (CSF):** `PR.PT-3`, `PR.DS-2`, `ID.RA-1`.
@@ -135,6 +203,7 @@ To avoid false alarms, Agent 3 executes safe, controlled, non-destructive valida
     * `You have an error in your SQL syntax` (MySQL / MariaDB)
     * `mysql_fetch_array`
     * `pg_query` (PostgreSQL)
+    * `SQLite3::`
     * `ORA-[0-9]{5}` (Oracle DB)
     * `ODBC SQL Server Driver` (Microsoft SQL Server)
 * **Sensitive File Exposure:**
@@ -171,13 +240,23 @@ To avoid false alarms, Agent 3 executes safe, controlled, non-destructive valida
 
 ---
 
-## ⚖️ Legal & Institutional Framework (ANCS RBAC & RoE)
+## 📊 Data Exchange Payload Specification (JSON Schema)
 
-Because the probe transmits active TCP/HTTP packets, execution is strictly governed by institutional authorization rules:
-1. **Mandat ANCS Validation:** Saisie obligatoire d'un code de mandat officiel (ex: `ANCS-2026`, `ANCS-SEC-2026`).
-2. **Rules of Engagement (RoE):** Mandatory acceptance of 3 strict engagement clauses (authorized schedule, no service disruption, TLP:AMBER classification).
-3. **Auditor Digital Signature:** Non-repudiation logging with the officer's digital identity.
-4. **Server-Side Gatekeeper ([`route.ts`](backend/api/scan/route.ts)):** Rejects unauthorized requests with `HTTP 403 Forbidden` if mandate or RoE acceptance is missing.
+When the back-end completes the audit, it returns the following structured JSON payload to the front-end:
+
+| JSON Key | Type | Description |
+| :--- | :--- | :--- |
+| `is_autonomous_agent` | `boolean` | `true` (enables the multi-agent telemetry view in the UI) |
+| `mandat_reference` | `string` | Official ANCS authorization mandate (e.g. `ANCS-2026`) |
+| `auditor_signature` | `string` | Digital signature of the inspecting auditor |
+| `sha256_hash` | `string` | Cryptographic SHA-256 seal of the audit state |
+| `total_score` & `grade` | `number`, `string` | Final CyberScore (0–100) and sovereign grade (`A+` to `F`) |
+| `agent_scores` | `object` | Scores for the 4 agents (`recon_ports`, `cve_analysis`, `poc_validation`, `remediation_seal`) |
+| `open_ports` | `array` | List of detected open ports with service name, banner, and risk status |
+| `os_detection` | `object` | OS family, detailed release, TTL received, hop distance, and RTT latency |
+| `software_obsolescence`| `array` | Detected EOL components, release age in years, and sample CVEs |
+| `findings` | `array` | Vulnerabilities with CVSS score, OWASP category, raw evidence, and `poc_verified` flag |
+| `remediation_roadmap` | `array` | Prioritized remediation steps with copyable bash commands |
 
 ---
 
