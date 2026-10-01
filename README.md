@@ -330,7 +330,7 @@ This tool is intended exclusively for authorized cybersecurity auditing, soverei
 
 ## 👨‍💻 Author & Academic Reference
 
-* **Author:** Yosri Hamdouni ([@YosriSecOps](https://github.com/YosriSecOps))
+* **Author:** Yosri Hamdouni ([@YosriSecOps](https://github.com/YosriSecOps)) & Wajdi Hamdi
 * **Project:** CyberScore TN — Sovereign Cybersecurity Evaluation Platform
 * **Academic Reference:** TEK-UP PFA / ANCS National Cybersecurity Framework
 * **License:** [MIT License](LICENSE)
